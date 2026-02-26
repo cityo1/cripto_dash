@@ -8,7 +8,7 @@ const OrderForm = () => {
     useTradeStore();
 
   // 2. 현재 선택된 코인의 실시간 가격 정보 가져오기 (1개 코인만 구독)
-  const realTimeData = useUpbitWebSocket([{ market: selectedCoin }]);
+  const { data: realTimeData } = useUpbitWebSocket([{ market: selectedCoin }]);
   const currentPrice = realTimeData?.trade_price || 0;
 
   // 3. 로컬 상태 (매수/매도 탭, 입력 수량)

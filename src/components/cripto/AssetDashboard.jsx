@@ -7,7 +7,7 @@ const AssetDashboard = () => {
 
   // 1. 보유 중인 코인들의 실시간 시세를 가져오기 위해 마켓 코드 배열 생성
   const myAssetMarkets = Object.keys(myAssets).map((market) => ({ market }));
-  const realTimeData = useUpbitWebSocket(myAssetMarkets);
+  const { data: realTimeData } = useUpbitWebSocket(myAssetMarkets);
 
   // 2. 실시간 총 평가 금액 및 수익률 계산
   let totalEvaluation = 0;

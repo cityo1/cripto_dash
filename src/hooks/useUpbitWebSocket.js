@@ -1,46 +1,54 @@
-import { useState, useEffect, useRef } from 'react';
+/**
+ * 업비트 시세 훅 (REST API 폴링 방식)
+ * - WebSocket 대신 REST API 10초 폴링 사용 (브라우저 Origin 제한 대응)
+ * - 기존 useUpbitWebSocket과 동일한 인터페이스 유지
+ */
+import { useEffect, useRef } from 'react';
+import useUpbitTickerStore from '../store/useUpbitTickerStore';
+
+let idCounter = 0;
 
 const useUpbitWebSocket = (targetMarkets) => {
-  const [socketData, setSocketData] = useState(null);
-  const socketRef = useRef(null);
+  const idRef = useRef(null);
+  if (idRef.current == null) idRef.current = `ticker-${++idCounter}`;
+  const id = idRef.current;
 
+  const markets = Array.isArray(targetMarkets)
+    ? targetMarkets
+        .map((m) => (typeof m === 'string' ? m : m?.market))
+        .filter(Boolean)
+    : [];
+
+  const codesKey = markets.length > 0 ? [...markets].sort().join(',') : '';
+
+  const primaryMarket = markets[0] ?? null;
+  const singleMarket = markets.length === 1;
+
+  const status = useUpbitTickerStore((s) => s.status);
+  const tickerForPrimary = useUpbitTickerStore((s) =>
+    primaryMarket ? s.tickers[primaryMarket] : null,
+  );
+  const lastTicker = useUpbitTickerStore((s) => s._lastTicker);
+
+  const data = singleMarket ? tickerForPrimary : lastTicker;
+
+  const prevCodesRef = useRef('__none__');
   useEffect(() => {
-    if (!targetMarkets || targetMarkets.length === 0) return;
-
-    // 업비트 웹소켓 연결
-    socketRef.current = new WebSocket('wss://api.upbit.com/websocket/v1');
-    socketRef.current.binaryType = 'arraybuffer'; // 업비트는 데이터를 바이너리 형태로 보냄
-
-    socketRef.current.onopen = () => {
-      console.log('업비트 웹소켓 연결 성공');
-      // 구독 요청 보내기 (어떤 데이터를 받을지 설정)
-      const message = [
-        { ticket: 'test-ticket' }, // 식별값
-        { type: 'ticker', codes: targetMarkets.map((m) => m.market) }, // 실시간 시세 요청
-      ];
-      socketRef.current.send(JSON.stringify(message));
-    };
-
-    socketRef.current.onmessage = async (event) => {
-      // 바이너리 데이터를 텍스트(JSON)로 변환
-      const enc = new TextDecoder('utf-8');
-      const arr = new Uint8Array(event.data);
-      const data = JSON.parse(enc.decode(arr));
-      setSocketData(data);
-    };
-
-    socketRef.current.onerror = (error) => {
-      console.error('소켓 에러:', error);
-    };
-
+    if (!codesKey || codesKey === prevCodesRef.current) return;
+    prevCodesRef.current = codesKey;
+    const marketList = codesKey.split(',');
+    const store = useUpbitTickerStore.getState();
+    store.subscribe(id, marketList);
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
+      prevCodesRef.current = '__none__';
+      store.unsubscribe(id);
     };
-  }, [targetMarkets]);
+  }, [id, codesKey]);
 
-  return socketData;
+  return {
+    data: data ?? null,
+    status,
+  };
 };
 
 export default useUpbitWebSocket;

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Moon, Sun, Monitor } from 'lucide-react';
 import useThemeStore from '../../store/useThemeStore';
 import useTradeStore from '../../store/useTradeStore';
+import WebSocketStatusBadge from './WebSocketStatusBadge';
 
 const Header = () => {
   const { theme, cycleTheme } = useThemeStore();
@@ -45,6 +46,7 @@ const Header = () => {
         Crypto Dash
       </h1>
       <div className="flex items-center gap-4">
+        <WebSocketStatusBadge />
         <span className="text-sm font-mono text-gray-600 dark:text-gray-400">
           총 자산: {Math.floor(totalAsset).toLocaleString()} KRW
         </span>

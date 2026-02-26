@@ -2,69 +2,125 @@ import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import useUpbitWebSocket from '../../hooks/useUpbitWebSocket';
+import useUpbitTickerStore from '../../store/useUpbitTickerStore';
 import useTradeStore from '../../store/useTradeStore';
 
 // 금액 포맷팅 유틸리티
 const formatKRW = (val) =>
   new Intl.NumberFormat('ko-KR').format(Math.floor(val));
 
-const CoinList = ({ onSelectCoin }) => {
+const CoinList = () => {
   const [coinTickers, setCoinTickers] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const setSelectedCoin = useTradeStore((state) => state.setSelectedCoin);
   const selectedCoin = useTradeStore((state) => state.selectedCoin);
 
-  // 1. KRW 마켓 정보 가져오기
-  const { data: markets, isLoading } = useQuery({
+  // 1. KRW 마켓 전체 가져오기
+  const { data: marketsData, isLoading, isError, error } = useQuery({
     queryKey: ['markets'],
     queryFn: async () => {
       const res = await axios.get('https://api.upbit.com/v1/market/all');
       return res.data.filter((m) => m.market.startsWith('KRW-'));
     },
+    retry: 2,
+    staleTime: 5 * 60 * 1000,
   });
+  const markets = marketsData ?? [];
 
-  // 2. 작성하신 커스텀 훅 사용
-  const realTimeData = useUpbitWebSocket(markets);
-
-  // 3. 초기 시세 설정 (최초 1회)
-  useEffect(() => {
-    const fetchInitialTickers = async () => {
-      if (!markets) return;
+  // 2. 티커 REST API (React Query 캐싱 + 폴링)
+  const { data: tickerData, isLoading: isTickerLoading } = useQuery({
+    queryKey: ['tickers', markets.length],
+    queryFn: async () => {
+      if (!markets.length) return [];
       const codes = markets.map((m) => m.market).join(',');
       const res = await axios.get(
         `https://api.upbit.com/v1/ticker?markets=${codes}`,
       );
-      setCoinTickers(res.data);
-    };
-    fetchInitialTickers();
-  }, [markets]);
-
-  // 4. 소켓 데이터가 들어올 때마다 해당 코인 가격만 업데이트
-  useEffect(() => {
-    if (realTimeData) {
-      setCoinTickers((prev) =>
-        prev.map((coin) =>
-          coin.market === realTimeData.code
-            ? {
-                ...coin,
-                trade_price: realTimeData.trade_price,
-                signed_change_rate: realTimeData.signed_change_rate,
-                acc_trade_price_24h: realTimeData.acc_trade_price_24h,
-              }
-            : coin,
-        ),
+      return [...res.data].sort(
+        (a, b) => (b.acc_trade_price_24h ?? 0) - (a.acc_trade_price_24h ?? 0),
       );
-    }
-  }, [realTimeData]);
+    },
+    enabled: markets.length > 0,
+    staleTime: 10 * 1000,
+    refetchInterval: 60 * 1000,
+    retry: 2,
+  });
 
-  if (isLoading)
+  // 3. 티커 베이스 + WebSocket 실시간 패치
+  const wsMarkets = (() => {
+    const base = tickerData ?? coinTickers;
+    const top100 = base.slice(0, 100).map((c) => ({ market: c.market }));
+    if (top100.length === 0) return [];
+    const hasSelected = top100.some((m) => m.market === selectedCoin);
+    return hasSelected ? top100 : [...top100, { market: selectedCoin }];
+  })();
+  useUpbitWebSocket(wsMarkets.length > 0 ? wsMarkets : null);
+
+  const liveTickers = useUpbitTickerStore((s) => s.tickers);
+
+  // ticker REST 데이터 → coinTickers 동기화
+  useEffect(() => {
+    if (tickerData?.length) setCoinTickers(tickerData);
+  }, [tickerData]);
+
+  // 4. REST 폴링 배치 데이터를 coinTickers에 병합
+  useEffect(() => {
+    if (!coinTickers.length || Object.keys(liveTickers).length === 0) return;
+    setCoinTickers((prev) =>
+      prev.map((coin) => {
+        const live = liveTickers[coin.market];
+        if (!live) return coin;
+        return {
+          ...coin,
+          trade_price: live.trade_price,
+          signed_change_rate: live.signed_change_rate,
+          acc_trade_price_24h: live.acc_trade_price_24h,
+        };
+      }),
+    );
+  }, [liveTickers]);
+
+  if (isLoading || (markets.length > 0 && isTickerLoading && !tickerData))
     return (
-      <div className="p-4 text-gray-900 dark:text-white">
+      <div className="p-4 text-gray-900 dark:text-white bg-white dark:bg-[#121212] rounded-lg border border-gray-200 dark:border-gray-800">
         코인 목록 불러오는 중...
       </div>
     );
 
+  if (isError)
+    return (
+      <div className="p-4 text-red-600 dark:text-red-400 bg-white dark:bg-[#121212] rounded-lg border border-gray-200 dark:border-gray-800">
+        코인 목록을 불러오지 못했습니다. ({error?.message ?? '네트워크 오류'})
+      </div>
+    );
+
+  // 검색어로 필터링 (자산명 한글, 영문, 심볼)
+  const filteredTickers = coinTickers.filter((coin) => {
+    if (!searchQuery.trim()) return true;
+    const marketInfo = markets?.find((m) => m.market === coin.market);
+    const symbol = coin.market.split('-')[1]?.toLowerCase() ?? '';
+    const koreanName = marketInfo?.korean_name?.toLowerCase() ?? '';
+    const englishName = marketInfo?.english_name?.toLowerCase() ?? '';
+    const query = searchQuery.trim().toLowerCase();
+    return (
+      symbol.includes(query) ||
+      koreanName.includes(query) ||
+      englishName.includes(query)
+    );
+  });
+
   return (
     <div className="bg-white dark:bg-[#121212] text-gray-900 dark:text-white rounded-lg shadow-xl overflow-hidden border border-gray-200 dark:border-gray-800">
+      {/* 검색 */}
+      <div className="p-3 border-b border-gray-200 dark:border-gray-800">
+        <input
+          type="text"
+          placeholder="자산명/심볼 검색 (예: 비트코인, BTC)"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 text-sm text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:focus:ring-amber-500"
+        />
+      </div>
       {/* 헤더 */}
       <div className="grid grid-cols-4 gap-2 p-4 bg-gray-100 dark:bg-[#1e1e1e] text-xs font-bold text-gray-500 border-b border-gray-200 dark:border-gray-800">
         <span>자산명</span>
@@ -74,8 +130,8 @@ const CoinList = ({ onSelectCoin }) => {
       </div>
 
       {/* 리스트 본문 */}
-      <div className="overflow-y-auto max-h-[600px] custom-scrollbar">
-        {coinTickers.map((coin) => {
+      <div className="overflow-y-auto max-h-[560px] custom-scrollbar">
+        {filteredTickers.map((coin) => {
           const marketInfo = markets?.find((m) => m.market === coin.market);
           const isPositive = coin.signed_change_rate > 0;
           const isNegative = coin.signed_change_rate < 0;
