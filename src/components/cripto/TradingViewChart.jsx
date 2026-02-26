@@ -54,7 +54,7 @@ const TradingViewChart = () => {
 
   const { selectedCoin } = useTradeStore();
   const { theme } = useThemeStore();
-  const { data: realTimeData } = useUpbitWebSocket([{ market: selectedCoin }]);
+  useUpbitWebSocket([{ market: selectedCoin }]); // ticker 구독 유지 (OrderForm 등에서 사용)
 
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[0]);
   const [isLoading, setIsLoading] = useState(false);
@@ -218,25 +218,43 @@ const TradingViewChart = () => {
     };
   }, [selectedCoin, timeframe, chartTheme.tooltipBg, chartTheme.tooltipBorder, chartTheme.textColor]);
 
-  // 5. 실시간 데이터 업데이트 (1분봉만 - 다른 타임프레임은 REST로 처리)
+  // 5. 실시간 데이터 업데이트 (1분봉만 - 캔들 API 사용, ticker는 24h OHLC라 사용 불가)
   useEffect(() => {
     const series = seriesRef.current;
     if (
-      realTimeData &&
-      series &&
-      realTimeData.code === selectedCoin &&
-      timeframe.unit === 1 &&
-      timeframe.type === 'minutes'
-    ) {
-      series.update({
-        time: Math.floor(realTimeData.trade_timestamp / 1000),
-        open: realTimeData.opening_price,
-        high: realTimeData.high_price,
-        low: realTimeData.low_price,
-        close: realTimeData.trade_price,
-      });
-    }
-  }, [realTimeData, selectedCoin, timeframe]);
+      !selectedCoin ||
+      !series ||
+      timeframe.unit !== 1 ||
+      timeframe.type !== 'minutes'
+    )
+      return;
+
+    const fetchAndUpdate = async () => {
+      try {
+        const res = await axios.get(
+          `https://api.upbit.com/v1/candles/minutes/1?market=${selectedCoin}&count=1`
+        );
+        const c = res.data?.[0];
+        if (!c) return;
+        const bar = {
+          time: Math.floor(
+            new Date(c.candle_date_time_kst).getTime() / 1000
+          ),
+          open: c.opening_price,
+          high: c.high_price,
+          low: c.low_price,
+          close: c.trade_price,
+        };
+        series.update(bar);
+      } catch (err) {
+        console.warn('1분봉 갱신 실패:', err?.message);
+      }
+    };
+
+    fetchAndUpdate();
+    const interval = setInterval(fetchAndUpdate, 10000); // 10초마다
+    return () => clearInterval(interval);
+  }, [selectedCoin, timeframe]);
 
   return (
     <div className="w-full bg-white dark:bg-[#1a1a1a] p-4 rounded-lg border border-gray-200 dark:border-gray-800 shadow-xl">
