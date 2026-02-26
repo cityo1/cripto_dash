@@ -1,0 +1,12 @@
+src/
+├── api/              # API 호출 및 WebSocket 연결 로직 (Axios, React Query)
+├── assets/           # 이미지, 아이콘, 폰트
+├── components/       # 공통 UI 컴포넌트
+│   ├── common/       # Button, Input, Modal, Loader (재사용)
+│   ├── layout/       # Header, Footer, Sidebar, PageLayout
+│   └── crypto/       # CoinList, CoinDetail, OrderBook, MyPortfolio
+├── hooks/            # 커스텀 훅 (useWebSocket, useTrade, useAssets)
+├── pages/            # 실제 페이지 구성 (Dashboard, Trade, History, Settings)
+├── store/            # 전역 상태 관리 (Zustand 또는 Redux Toolkit)
+├── utils/            # 숫자 포맷팅(KRW 변환), 날짜 계산 등 유틸리티 함수
+└── App.js            # 라우팅 설정
